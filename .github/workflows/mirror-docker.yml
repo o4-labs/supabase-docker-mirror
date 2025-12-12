@@ -1,0 +1,63 @@
+name: Mirror Supabase Docker Directory
+
+on:
+  schedule:
+    # Run once every day at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Clone Supabase repository
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/supabase/supabase.git /tmp/supabase
+          cd /tmp/supabase
+          git sparse-checkout set docker
+
+      - name: Copy docker directory contents to root
+        run: |
+          # Ensure we're in the repository root
+          cd $GITHUB_WORKSPACE
+
+          # Remove existing files (except .git and .github)
+          find . -maxdepth 1 -not -name '.git' -not -name '.github' \
+            -not -name '.' -not -name '..' -exec rm -rf {} +
+
+          # Copy contents from supabase/docker to root (including hidden files)
+          cp -r /tmp/supabase/docker/. .
+
+          # Clean up
+          rm -rf /tmp/supabase
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          git commit -m "Mirror updates from supabase/supabase/docker [$TIMESTAMP]"
+          git push
